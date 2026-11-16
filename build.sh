@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="${0:A:h}"
-CERT_AGENT_DIR="${SPRU_CERT_AGENT_DIR:-$ROOT/../ChatGPT-Proxy-Cert-Agent}"
+CERT_AGENT_DIR="${SPRU_CERT_AGENT_DIR:-$ROOT/cert-agent}"
 DIST="$ROOT/dist"
 APP="$DIST/ChatGPT Proxy.app"
 ARCHIVE="$DIST/ChatGPT-Proxy-macOS.zip"
