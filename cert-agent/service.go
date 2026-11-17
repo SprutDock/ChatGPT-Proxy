@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-func installLaunchAgents(p Paths) error {
+func installLaunchAgents(p Paths, interactive bool) error {
 	if err := ensurePrivateDir(filepath.Dir(p.StunnelAgent)); err != nil {
 		return err
 	}
@@ -34,9 +34,16 @@ func installLaunchAgents(p Paths) error {
 		return err
 	}
 	agent := filepath.Join(p.Resources, "cert-agent")
-	schedulerPlist := launchAgentPlist(agentLabel, []string{agent, "ensure", "--background"}, p.Log, false, 6*60*60)
-	if err := writeAtomic(p.SchedulerAgent, []byte(schedulerPlist), 0o600); err != nil {
+	schedulerPlist := launchAgentPlist(agentLabel, []string{agent, "ensure", "--background"}, p.Log, false, 12*60*60)
+	if !interactive && available(p.SchedulerAgent) {
+		return ensureJobLoaded(domain, agentLabel, p.SchedulerAgent)
+	}
+	changed, err := writeIfChanged(p.SchedulerAgent, []byte(schedulerPlist), 0o600)
+	if err != nil {
 		return err
+	}
+	if changed {
+		return reloadJob(domain, agentLabel, p.SchedulerAgent)
 	}
 	return ensureJobLoaded(domain, agentLabel, p.SchedulerAgent)
 }
@@ -64,6 +71,33 @@ func ensureJobLoaded(domain, label, plistPath string) error {
 		return fmt.Errorf("could not load the certificate agent")
 	}
 	return nil
+}
+
+func reloadJob(domain, label, plistPath string) error {
+	target := domain + "/" + label
+	if command("launchctl", "print", target).Run() == nil {
+		if err := command("launchctl", "bootout", target).Run(); err != nil {
+			return fmt.Errorf("could not reload the certificate agent")
+		}
+	}
+	if err := command("launchctl", "bootstrap", domain, plistPath).Run(); err != nil {
+		return fmt.Errorf("could not reload the certificate agent")
+	}
+	return nil
+}
+
+func writeIfChanged(path string, value []byte, mode os.FileMode) (bool, error) {
+	current, err := os.ReadFile(path)
+	if err == nil && bytes.Equal(current, value) {
+		return false, nil
+	}
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+	if err := writeAtomic(path, value, mode); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func ensureStunnelRunning(p Paths) error {

@@ -20,7 +20,7 @@ func ensure(p Paths, interactive bool) error {
 	if err != nil {
 		return err
 	}
-	if err := installLaunchAgents(p); err != nil {
+	if err := installLaunchAgents(p, interactive); err != nil {
 		return err
 	}
 	configChanged, err := writeStunnelConfig(p)
