@@ -136,7 +136,7 @@ func writeStunnelConfig(p Paths) (bool, error) {
 		"client = yes",
 		"sessionResume = no",
 		"accept = " + proxyAddress,
-		"connect = " + proxyHost + ":3131",
+		"connect = " + proxyHost + ":3128",
 		"cert = " + filepath.Join(p.ActiveLink, "client.pem"),
 		"key = " + filepath.Join(p.ActiveLink, "client.key"),
 		"CAfile = " + filepath.Join(p.Resources, "server-ca.pem"),
