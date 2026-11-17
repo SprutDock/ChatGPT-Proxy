@@ -1,9 +1,8 @@
 #import <AppKit/AppKit.h>
-
-static NSString *const GitHubLatestReleaseAPI = @"https://api.github.com/repos/SprutDock/ChatGPT-Proxy/releases/latest";
-static NSString *const GitHubLatestReleasePage = @"https://github.com/SprutDock/ChatGPT-Proxy/releases/latest";
+#import "ChatGPTProxyUpdater.h"
 
 @interface AppDelegate : NSObject <NSApplicationDelegate>
+@property (nonatomic, strong) ChatGPTProxyUpdater *updater;
 @end
 
 @implementation AppDelegate
@@ -49,45 +48,12 @@ static NSString *const GitHubLatestReleasePage = @"https://github.com/SprutDock/
     }
 }
 
-- (void)checkForUpdatesThenLaunchProxy {
-    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:GitHubLatestReleaseAPI]];
-    request.timeoutInterval = 4.0;
-    request.cachePolicy = NSURLRequestReloadIgnoringLocalCacheData;
-    [request setValue:@"application/vnd.github+json" forHTTPHeaderField:@"Accept"];
-    [request setValue:@"ChatGPT-Proxy" forHTTPHeaderField:@"User-Agent"];
-
-    NSURLSessionDataTask *updateCheck = [[NSURLSession sharedSession] dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
-        NSHTTPURLResponse *httpResponse = (NSHTTPURLResponse *)response;
-        NSDictionary *release = data == nil ? nil : [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
-        id tag = [release isKindOfClass:[NSDictionary class]] ? release[@"tag_name"] : nil;
-        NSString *currentVersion = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
-        NSString *latestVersion = [tag isKindOfClass:[NSString class]] && [tag hasPrefix:@"v"] ? [tag substringFromIndex:1] : tag;
-
-        if (error != nil || httpResponse.statusCode != 200 || ![latestVersion isKindOfClass:[NSString class]] || ![currentVersion isKindOfClass:[NSString class]] || [latestVersion compare:currentVersion options:NSNumericSearch] != NSOrderedDescending) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [self launchProxy];
-            });
-            return;
-        }
-
-        dispatch_async(dispatch_get_main_queue(), ^{
-            NSAlert *alert = [[NSAlert alloc] init];
-            alert.messageText = @"Доступна новая версия ChatGPT Proxy";
-            alert.informativeText = [NSString stringWithFormat:@"Установлена версия %@. На GitHub доступна версия %@.", currentVersion, latestVersion];
-            [alert addButtonWithTitle:@"Открыть релиз"];
-            [alert addButtonWithTitle:@"Позже"];
-            [NSApp activateIgnoringOtherApps:YES];
-            if ([alert runModal] == NSAlertFirstButtonReturn) {
-                [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:GitHubLatestReleasePage]];
-            }
-            [self launchProxy];
-        });
-    }];
-    [updateCheck resume];
-}
-
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
-    [self checkForUpdatesThenLaunchProxy];
+    self.updater = [[ChatGPTProxyUpdater alloc] init];
+    __weak typeof(self) weakSelf = self;
+    [self.updater checkForUpdatesWithCompletion:^{
+        [weakSelf launchProxy];
+    }];
 }
 
 @end

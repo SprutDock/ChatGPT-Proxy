@@ -48,12 +48,14 @@ cp "$ROOT/Info.plist" "$STAGE_APP/Contents/Info.plist"
 cp "$ROOT/assets/chatgpt.icns" "$STAGE_APP/Contents/Resources/chatgpt.icns"
 cp "$ROOT/macos-proxy-url.txt" "$STAGE_APP/Contents/Resources/macos-proxy-url.txt"
 cp "$ROOT/launch.sh" "$STAGE_APP/Contents/Resources/launch.sh"
+cp "$ROOT/update.sh" "$STAGE_APP/Contents/Resources/update.sh"
 cp "$SPRU_CLIENT_CA_CHAIN_FILE" "$STAGE_APP/Contents/Resources/client-ca-chain.pem"
 cp "$SPRU_SERVER_CA_FILE" "$STAGE_APP/Contents/Resources/server-ca.pem"
 cp "$SPRU_STUNNEL_BINARY" "$STAGE_APP/Contents/Resources/stunnel"
 cp "$SPRU_OPENSSL_LIB_DIR/libssl.4.dylib" "$STAGE_APP/Contents/Resources/libssl.4.dylib"
 cp "$SPRU_OPENSSL_LIB_DIR/libcrypto.4.dylib" "$STAGE_APP/Contents/Resources/libcrypto.4.dylib"
 chmod 755 "$STAGE_APP/Contents/Resources/launch.sh"
+chmod 755 "$STAGE_APP/Contents/Resources/update.sh"
 chmod 644 "$STAGE_APP/Contents/Resources/client-ca-chain.pem" "$STAGE_APP/Contents/Resources/server-ca.pem"
 chmod 755 "$STAGE_APP/Contents/Resources/stunnel"
 
@@ -94,7 +96,7 @@ CLANG_ARCHES=()
 for architecture in "${ARCHES[@]}"; do
     CLANG_ARCHES+=(-arch "$architecture")
 done
-clang -fobjc-arc -framework AppKit -mmacosx-version-min=13.0 "${CLANG_ARCHES[@]}" "$ROOT/Launcher.m" -o "$STAGE_APP/Contents/MacOS/ChatGPTProxyLauncher"
+clang -fobjc-arc -framework AppKit -mmacosx-version-min=13.0 "${CLANG_ARCHES[@]}" "$ROOT/Launcher.m" "$ROOT/ChatGPTProxyUpdater.m" -o "$STAGE_APP/Contents/MacOS/ChatGPTProxyLauncher"
 
 if [[ "$PRODUCTION_BUILD" == 1 ]]; then
     : "${SPRU_DEVELOPER_ID:?Set the Developer ID Application identity}"
