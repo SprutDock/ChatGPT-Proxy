@@ -59,12 +59,12 @@ func (client *APIClient) post(path string, body any, certificate *tls.Certificat
 	}
 	response, err := httpClient.Do(request)
 	if err != nil {
-		return fmt.Errorf("enrollment service is unavailable")
+		return fmt.Errorf("enrollment service is unavailable: %w", err)
 	}
 	defer response.Body.Close()
 	responseBody, err := io.ReadAll(io.LimitReader(response.Body, 512*1024))
 	if err != nil {
-		return fmt.Errorf("enrollment service response could not be read")
+		return fmt.Errorf("enrollment service response could not be read: %w", err)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		var value struct {
@@ -76,7 +76,7 @@ func (client *APIClient) post(path string, body any, certificate *tls.Certificat
 		return fmt.Errorf("enrollment service returned HTTP %d", response.StatusCode)
 	}
 	if err := json.Unmarshal(responseBody, result); err != nil {
-		return fmt.Errorf("enrollment service response is invalid")
+		return fmt.Errorf("enrollment service response is invalid: %w", err)
 	}
 	return nil
 }

@@ -25,7 +25,7 @@ ENSURE_STARTED="$(/bin/date +%s)"
 log_event "proxy ensure started"
 if ! "$CERT_AGENT" ensure; then
     log_event "proxy ensure failed seconds=$(( $(/bin/date +%s) - ENSURE_STARTED ))"
-    /usr/bin/osascript -e 'display alert "Прокси SprutDock не готов" message "Регистрация, сертификат или защищённое соединение не прошли проверку. ChatGPT не запущен." as critical'
+    /usr/bin/osascript -e 'display alert "Прокси SprutDock не готов" message "Регистрация, сертификат или защищённое соединение не прошли проверку. ChatGPT не запущен." as critical' >/dev/null 2>&1
     exit 1
 fi
 log_event "proxy ensure ready seconds=$(( $(/bin/date +%s) - ENSURE_STARTED ))"

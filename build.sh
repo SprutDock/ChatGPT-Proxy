@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="${0:A:h}"
 CERT_AGENT_DIR="${SPRU_CERT_AGENT_DIR:-$ROOT/cert-agent}"
+CLIENT_CA_CHAIN_FILE="${SPRU_CLIENT_CA_CHAIN_FILE:-$ROOT/assets/client-ca-chain.pem}"
 DIST="$ROOT/dist"
 APP="$DIST/ChatGPT Proxy.app"
 ARCHIVE="$DIST/ChatGPT-Proxy-macOS.zip"
@@ -24,13 +25,18 @@ elif [[ "$BUILD_ARCH" != arm64 ]]; then
     exit 1
 fi
 
-: "${SPRU_CLIENT_CA_CHAIN_FILE:?Set the production client CA chain file}"
 : "${SPRU_SERVER_CA_FILE:?Set the public server CA file}"
 : "${SPRU_STUNNEL_BINARY:?Set a verified stunnel binary}"
 : "${SPRU_OPENSSL_LIB_DIR:?Set the directory containing the matching OpenSSL dylibs}"
-[[ -r "$SPRU_CLIENT_CA_CHAIN_FILE" && -r "$SPRU_SERVER_CA_FILE" && -x "$SPRU_STUNNEL_BINARY" ]] || { print -u2 "A certificate bundle or stunnel input is unavailable"; exit 1; }
+[[ -r "$CLIENT_CA_CHAIN_FILE" && -r "$SPRU_SERVER_CA_FILE" && -x "$SPRU_STUNNEL_BINARY" ]] || { print -u2 "A certificate bundle or stunnel input is unavailable"; exit 1; }
 [[ -r "$SPRU_OPENSSL_LIB_DIR/libssl.4.dylib" && -r "$SPRU_OPENSSL_LIB_DIR/libcrypto.4.dylib" ]] || { print -u2 "The matching OpenSSL 4 dylibs are unavailable"; exit 1; }
 [[ -f "$CERT_AGENT_DIR/go.mod" ]] || { print -u2 "The cert-agent source is unavailable"; exit 1; }
+
+CLIENT_CA_CERT_COUNT="$(LC_ALL=C /usr/bin/awk '/-----BEGIN CERTIFICATE-----/ { count++ } END { print count+0 }' "$CLIENT_CA_CHAIN_FILE")"
+if [[ "$CLIENT_CA_CERT_COUNT" -lt 2 ]] || ! /usr/bin/openssl crl2pkcs7 -nocrl -certfile "$CLIENT_CA_CHAIN_FILE" -out /dev/null >/dev/null 2>&1; then
+    print -u2 "The client CA chain must contain valid PEM issuing and root certificates"
+    exit 1
+fi
 
 if ! /usr/bin/lipo "$SPRU_STUNNEL_BINARY" -verify_arch "${ARCHES[@]}"; then
     print -u2 "stunnel must support $BUILD_ARCH"
@@ -49,7 +55,7 @@ cp "$ROOT/assets/chatgpt.icns" "$STAGE_APP/Contents/Resources/chatgpt.icns"
 cp "$ROOT/macos-proxy-url.txt" "$STAGE_APP/Contents/Resources/macos-proxy-url.txt"
 cp "$ROOT/launch.sh" "$STAGE_APP/Contents/Resources/launch.sh"
 cp "$ROOT/update.sh" "$STAGE_APP/Contents/Resources/update.sh"
-cp "$SPRU_CLIENT_CA_CHAIN_FILE" "$STAGE_APP/Contents/Resources/client-ca-chain.pem"
+cp "$CLIENT_CA_CHAIN_FILE" "$STAGE_APP/Contents/Resources/client-ca-chain.pem"
 cp "$SPRU_SERVER_CA_FILE" "$STAGE_APP/Contents/Resources/server-ca.pem"
 cp "$SPRU_STUNNEL_BINARY" "$STAGE_APP/Contents/Resources/stunnel"
 cp "$SPRU_OPENSSL_LIB_DIR/libssl.4.dylib" "$STAGE_APP/Contents/Resources/libssl.4.dylib"
