@@ -28,6 +28,10 @@ func main() {
 			fail("this device is not enrolled")
 		}
 		fmt.Printf("device=%s serial=%s\n", state.DeviceID, state.ActiveSerial)
+	case "stop":
+		if err := stopStunnel(p); err != nil {
+			fail(err.Error())
+		}
 	default:
 		fail("unknown command")
 	}

@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -44,7 +46,7 @@ func (client *APIClient) post(path string, body any, certificate *tls.Certificat
 	request.Header.Set("Content-Type", "application/json")
 	transport := &http.Transport{
 		Proxy:           nil,
-		DialContext:     (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		DialContext:     dialWithDNSRetry(&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}),
 		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 	}
 	if certificate != nil {
@@ -79,6 +81,17 @@ func (client *APIClient) post(path string, body any, certificate *tls.Certificat
 		return fmt.Errorf("enrollment service response is invalid: %w", err)
 	}
 	return nil
+}
+
+func dialWithDNSRetry(dialer *net.Dialer) func(context.Context, string, string) (net.Conn, error) {
+	return func(ctx context.Context, network, address string) (net.Conn, error) {
+		connection, err := dialer.DialContext(ctx, network, address)
+		var dnsError *net.DNSError
+		if err == nil || !errors.As(err, &dnsError) || !dnsError.IsTimeout {
+			return connection, err
+		}
+		return dialer.DialContext(ctx, network, address)
+	}
 }
 
 func (client *APIClient) enroll(invitation, requestID, credential, csr string) (EnrollmentResult, error) {

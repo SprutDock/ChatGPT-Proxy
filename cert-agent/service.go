@@ -11,80 +11,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 )
-
-func installLaunchAgents(p Paths, interactive bool) error {
-	if err := ensurePrivateDir(filepath.Dir(p.StunnelAgent)); err != nil {
-		return err
-	}
-	stunnel := filepath.Join(p.Resources, "stunnel")
-	if _, err := os.Stat(stunnel); err != nil {
-		return fmt.Errorf("bundled stunnel is unavailable")
-	}
-	uid, err := currentUID()
-	if err != nil {
-		return err
-	}
-	domain := "gui/" + uid
-	stunnelPlist := launchAgentPlist(stunnelLabel, []string{stunnel, p.StunnelConf}, p.StunnelLog, true, 0)
-	if err := writeAtomic(p.StunnelAgent, []byte(stunnelPlist), 0o600); err != nil {
-		return err
-	}
-	agent := filepath.Join(p.Resources, "cert-agent")
-	schedulerPlist := launchAgentPlist(agentLabel, []string{agent, "ensure", "--background"}, p.Log, false, 12*60*60)
-	if !interactive && available(p.SchedulerAgent) {
-		return ensureJobLoaded(domain, agentLabel, p.SchedulerAgent)
-	}
-	changed, err := writeIfChanged(p.SchedulerAgent, []byte(schedulerPlist), 0o600)
-	if err != nil {
-		return err
-	}
-	if changed {
-		return reloadJob(domain, agentLabel, p.SchedulerAgent)
-	}
-	return ensureJobLoaded(domain, agentLabel, p.SchedulerAgent)
-}
-
-func launchAgentPlist(label string, arguments []string, logPath string, keepAlive bool, interval int) string {
-	var values strings.Builder
-	for _, argument := range arguments {
-		values.WriteString("<string>" + plistEscape(argument) + "</string>")
-	}
-	var schedule strings.Builder
-	if keepAlive {
-		schedule.WriteString("<key>KeepAlive</key><true/><key>RunAtLoad</key><true/>")
-	}
-	if interval > 0 {
-		schedule.WriteString("<key>StartInterval</key><integer>" + strconv.Itoa(interval) + "</integer>")
-	}
-	return "<?xml version=\"1.0\" encoding=\"UTF-8\"?><!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\"><plist version=\"1.0\"><dict><key>Label</key><string>" + plistEscape(label) + "</string><key>ProgramArguments</key><array>" + values.String() + "</array><key>StandardOutPath</key><string>" + plistEscape(logPath) + "</string><key>StandardErrorPath</key><string>" + plistEscape(logPath) + "</string>" + schedule.String() + "</dict></plist>\n"
-}
-
-func ensureJobLoaded(domain, label, plistPath string) error {
-	if command("launchctl", "print", domain+"/"+label).Run() == nil {
-		return nil
-	}
-	if err := command("launchctl", "bootstrap", domain, plistPath).Run(); err != nil {
-		return fmt.Errorf("could not load the certificate agent")
-	}
-	return nil
-}
-
-func reloadJob(domain, label, plistPath string) error {
-	target := domain + "/" + label
-	if command("launchctl", "print", target).Run() == nil {
-		if err := command("launchctl", "bootout", target).Run(); err != nil {
-			return fmt.Errorf("could not reload the certificate agent")
-		}
-	}
-	if err := command("launchctl", "bootstrap", domain, plistPath).Run(); err != nil {
-		return fmt.Errorf("could not reload the certificate agent")
-	}
-	return nil
-}
 
 func writeIfChanged(path string, value []byte, mode os.FileMode) (bool, error) {
 	current, err := os.ReadFile(path)
@@ -100,50 +29,37 @@ func writeIfChanged(path string, value []byte, mode os.FileMode) (bool, error) {
 	return true, nil
 }
 
-func ensureStunnelRunning(p Paths) error {
-	uid, err := currentUID()
-	if err != nil {
-		return err
-	}
-	domain := "gui/" + uid
-	if err := ensureJobLoaded(domain, stunnelLabel, p.StunnelAgent); err != nil {
-		return err
-	}
-	return nil
-}
-
-func restartStunnel(p Paths) error {
-	if err := ensureStunnelRunning(p); err != nil {
-		return err
-	}
-	uid, err := currentUID()
-	if err != nil {
-		return err
-	}
-	domain := "gui/" + uid
-	if err := command("launchctl", "kickstart", "-k", domain+"/"+stunnelLabel).Run(); err != nil {
-		return fmt.Errorf("could not start the local proxy tunnel")
-	}
-	return nil
-}
-
 func writeStunnelConfig(p Paths) (bool, error) {
+	certificatePath, err := stunnelStorePath(p.Resources, filepath.Join(p.ActiveLink, "client.pem"))
+	if err != nil {
+		return false, err
+	}
+	keyPath, err := stunnelStorePath(p.Resources, filepath.Join(p.ActiveLink, "client.key"))
+	if err != nil {
+		return false, err
+	}
+	caPath, err := stunnelStorePath(p.Resources, filepath.Join(p.Resources, "server-ca.pem"))
+	if err != nil {
+		return false, err
+	}
 	config := []string{
-		"foreground = yes",
 		"debug = 4",
-		"output = " + p.StunnelLog,
+		"output = " + stunnelPath(p.StunnelLog),
 		"[sprutdock-proxy]",
 		"client = yes",
 		"sessionResume = no",
 		"accept = " + proxyAddress,
 		"connect = " + proxyHost + ":3128",
-		"cert = " + filepath.Join(p.ActiveLink, "client.pem"),
-		"key = " + filepath.Join(p.ActiveLink, "client.key"),
-		"CAfile = " + filepath.Join(p.Resources, "server-ca.pem"),
+		"cert = " + certificatePath,
+		"key = " + keyPath,
+		"CAfile = " + caPath,
 		"verifyChain = yes",
 		"checkHost = " + proxyHost,
 		"sslVersionMin = TLSv1.2",
 		"TIMEOUTconnect = 10",
+	}
+	if foreground := stunnelForegroundOption(); foreground != "" {
+		config = append([]string{foreground}, config...)
 	}
 	content := []byte(strings.Join(config, "\n") + "\n")
 	current, err := os.ReadFile(p.StunnelConf)

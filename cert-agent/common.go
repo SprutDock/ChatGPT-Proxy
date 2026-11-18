@@ -5,12 +5,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
-	"strings"
 )
 
 const (
@@ -31,6 +28,7 @@ type Paths struct {
 	StunnelLog     string
 	StunnelAgent   string
 	SchedulerAgent string
+	StunnelPIDFile string
 	StateFile      string
 	PendingFile    string
 }
@@ -60,32 +58,6 @@ type PendingRenewal struct {
 type PendingState struct {
 	Enrollment *PendingEnrollment `json:"enrollment,omitempty"`
 	Renewal    *PendingRenewal    `json:"renewal,omitempty"`
-}
-
-func paths() (Paths, error) {
-	executable, err := os.Executable()
-	if err != nil {
-		return Paths{}, err
-	}
-	resources := filepath.Dir(executable)
-	home := os.Getenv("HOME")
-	if home == "" {
-		return Paths{}, fmt.Errorf("current user home is unavailable")
-	}
-	state := filepath.Join(home, "Library", "Application Support", "SprutDock Proxy")
-	return Paths{
-		Resources:      resources,
-		State:          state,
-		Releases:       filepath.Join(state, "identity", "releases"),
-		ActiveLink:     filepath.Join(state, "identity", "active"),
-		StunnelConf:    filepath.Join(state, "stunnel.conf"),
-		Log:            filepath.Join(state, "agent.log"),
-		StunnelLog:     filepath.Join(state, "stunnel.log"),
-		StunnelAgent:   filepath.Join(home, "Library", "LaunchAgents", stunnelLabel+".plist"),
-		SchedulerAgent: filepath.Join(home, "Library", "LaunchAgents", agentLabel+".plist"),
-		StateFile:      filepath.Join(state, "state.json"),
-		PendingFile:    filepath.Join(state, "pending.json"),
-	}, nil
 }
 
 func ensurePrivateDir(path string) error {
@@ -120,7 +92,7 @@ func writeAtomic(path string, value []byte, mode os.FileMode) error {
 	if err := temporary.Close(); err != nil {
 		return err
 	}
-	return os.Rename(temporaryPath, path)
+	return replaceFile(temporaryPath, path)
 }
 
 func readJSON(path string, target any) error {
@@ -171,18 +143,6 @@ func randomHex(size int) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(data), nil
-}
-
-func plistEscape(value string) string {
-	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", "\"", "&quot;", "'", "&apos;").Replace(value)
-}
-
-func currentUID() (string, error) {
-	uid := os.Getuid()
-	if uid < 0 {
-		return "", fmt.Errorf("current user id is unavailable")
-	}
-	return strconv.Itoa(uid), nil
 }
 
 func command(name string, args ...string) *exec.Cmd {
