@@ -6,7 +6,9 @@ CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 ENV_FILE="$CODEX_HOME/.env"
 PROXY_URL_FILE="$SCRIPT_DIR/macos-proxy-url.txt"
 CERT_AGENT="$SCRIPT_DIR/cert-agent"
-APP_EXECUTABLE="/Applications/ChatGPT.app/Contents/MacOS/ChatGPT"
+CHATGPT_APP="/Applications/ChatGPT.app"
+APP_EXECUTABLE="$CHATGPT_APP/Contents/MacOS/ChatGPT"
+LAUNCHER_EXECUTABLE="$SCRIPT_DIR/../MacOS/ChatGPTProxyLauncher"
 LOCAL_PROXY="$(/usr/bin/tr -d '\r\n' < "$PROXY_URL_FILE")"
 LOG_DIR="$HOME/Library/Logs/SprutDock ChatGPT Proxy"
 LOG_FILE="$LOG_DIR/launcher-events.log"
@@ -18,15 +20,35 @@ log_event() {
 log_event "launcher invoked"
 
 [[ -x "$APP_EXECUTABLE" ]] || { print -u2 "Не найдено приложение /Applications/ChatGPT.app"; exit 1; }
+[[ -x "$LAUNCHER_EXECUTABLE" ]] || { print -u2 "Не найден системный запускатель ChatGPT"; exit 1; }
 [[ -x "$CERT_AGENT" ]] || { print -u2 "Не найден cert-agent в ресурсах приложения"; exit 1; }
 [[ "$LOCAL_PROXY" == http://127.0.0.1:3128 ]] || { print -u2 "Некорректный локальный proxy URL"; exit 1; }
 
 ENSURE_STARTED="$(/bin/date +%s)"
 log_event "proxy ensure started"
-if ! "$CERT_AGENT" ensure; then
+AGENT_PID=""
+cancel_ensure() {
+    if [[ -n "$AGENT_PID" ]]; then
+        /bin/kill -TERM "$AGENT_PID" >/dev/null 2>&1 || true
+        wait "$AGENT_PID" >/dev/null 2>&1 || true
+    fi
+    exit 130
+}
+trap cancel_ensure INT TERM
+exec 3<&0
+"$CERT_AGENT" ensure --events <&3 &
+AGENT_PID=$!
+if wait "$AGENT_PID"; then
+    ENSURE_STATUS=0
+else
+    ENSURE_STATUS=$?
+fi
+trap - INT TERM
+exec 3<&-
+AGENT_PID=""
+if [[ "$ENSURE_STATUS" -ne 0 ]]; then
     log_event "proxy ensure failed seconds=$(( $(/bin/date +%s) - ENSURE_STARTED ))"
-    /usr/bin/osascript -e 'display alert "Прокси SprutDock не готов" message "Регистрация, сертификат или защищённое соединение не прошли проверку. ChatGPT не запущен." as critical' >/dev/null 2>&1
-    exit 1
+    exit "$ENSURE_STATUS"
 fi
 log_event "proxy ensure ready seconds=$(( $(/bin/date +%s) - ENSURE_STARTED ))"
 
@@ -53,15 +75,14 @@ export https_proxy="$LOCAL_PROXY"
 export NO_PROXY="${NO_PROXY:+$NO_PROXY,}${no_proxy:+$no_proxy,}localhost,127.0.0.1,::1"
 export no_proxy="$NO_PROXY"
 
-if /usr/bin/killall -0 ChatGPT >/dev/null 2>&1; then
-    /usr/bin/osascript -e 'tell application id "com.openai.codex" to quit' >/dev/null 2>&1 || true
-    for _ in {1..20}; do
-        /usr/bin/killall -0 ChatGPT >/dev/null 2>&1 || break
-        sleep 0.2
-    done
-    /usr/bin/killall -TERM ChatGPT >/dev/null 2>&1 || true
-    sleep 1
-fi
+while /usr/bin/pgrep -x ChatGPT >/dev/null 2>&1; do
+    if ! /usr/bin/osascript -e 'display dialog "ChatGPT уже открыт. Существующий экземпляр не переключается на новый туннель. Закройте ChatGPT и нажмите «Повторить» для безопасного запуска." buttons {"Отмена", "Повторить"} default button "Повторить" cancel button "Отмена"' >/dev/null 2>&1; then
+        exit 1
+    fi
+done
 
-/usr/bin/nohup "$APP_EXECUTABLE" --proxy-server="$LOCAL_PROXY" >/dev/null 2>&1 </dev/null &
-log_event "ChatGPT process launched"
+if ! "$LAUNCHER_EXECUTABLE" --open-application "$CHATGPT_APP" "--proxy-server=$LOCAL_PROXY"; then
+    log_event "ChatGPT launch failed"
+    exit 1
+fi
+log_event "ChatGPT launched through Launch Services"

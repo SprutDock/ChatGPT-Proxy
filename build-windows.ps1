@@ -32,20 +32,21 @@ $goArchitecture = if ($architecture -eq 'x64') { 'amd64' } else { 'arm64' }
 $dist = Join-Path $root 'dist'
 $stageRoot = Join-Path ([IO.Path]::GetTempPath()) ('sprutdock-proxy-build-' + [Guid]::NewGuid().ToString('N'))
 $stage = Join-Path $stageRoot 'package'
+$resources = Join-Path $stage 'ChatGPT Proxy Files'
 $archive = Join-Path $dist "ChatGPT-Proxy-Windows-$architecture.zip"
 
-New-Item -ItemType Directory -Path $stage, $dist -Force | Out-Null
+New-Item -ItemType Directory -Path $stage, $resources, $dist -Force | Out-Null
 try {
-    Copy-Item -LiteralPath (Join-Path $root 'windows-launcher.ps1'), (Join-Path $root 'windows-update.ps1') -Destination $stage
-    Copy-Item -LiteralPath $clientChain -Destination (Join-Path $stage 'client-ca-chain.pem')
-    Copy-Item -LiteralPath $serverCA -Destination (Join-Path $stage 'server-ca.pem')
-    Copy-Item -LiteralPath (Join-Path $stunnelDirectory 'stunnel.exe') -Destination (Join-Path $stage 'stunnel.exe')
-    Get-ChildItem -LiteralPath $stunnelDirectory -Filter '*.dll' -File | Copy-Item -Destination $stage
-    $stageConfig = Join-Path $stage 'config'
+    Copy-Item -LiteralPath (Join-Path $root 'windows-launcher.ps1'), (Join-Path $root 'windows-update.ps1') -Destination $resources
+    Copy-Item -LiteralPath $clientChain -Destination (Join-Path $resources 'client-ca-chain.pem')
+    Copy-Item -LiteralPath $serverCA -Destination (Join-Path $resources 'server-ca.pem')
+    Copy-Item -LiteralPath (Join-Path $stunnelDirectory 'stunnel.exe') -Destination (Join-Path $resources 'stunnel.exe')
+    Get-ChildItem -LiteralPath $stunnelDirectory -Filter '*.dll' -File | Copy-Item -Destination $resources
+    $stageConfig = Join-Path $resources 'config'
     New-Item -ItemType Directory -Path $stageConfig -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $stunnelConfig 'openssl.cnf'), (Join-Path $stunnelConfig 'fipsmodule.cnf') -Destination $stageConfig
-    Copy-Item -LiteralPath $stunnelModules -Destination $stage -Recurse
-    Set-Content -LiteralPath (Join-Path $stage 'version.txt') -Value $version -NoNewline -Encoding ascii
+    Copy-Item -LiteralPath $stunnelModules -Destination $resources -Recurse
+    Set-Content -LiteralPath (Join-Path $resources 'version.txt') -Value $version -NoNewline -Encoding ascii
 
     $oldGoOS = $env:GOOS
     $oldGoARCH = $env:GOARCH
@@ -54,9 +55,9 @@ try {
         $env:GOOS = 'windows'
         $env:GOARCH = $goArchitecture
         $env:CGO_ENABLED = '0'
-        & go -C $agentSource build -trimpath -ldflags '-s -w' -o (Join-Path $stage 'cert-agent.exe') .
+		& go -C $agentSource build -trimpath -ldflags '-s -w -H=windowsgui' -o (Join-Path $resources 'cert-agent.exe') ./cmd/cert-agent
         if ($LASTEXITCODE -ne 0) { throw 'The Windows certificate agent build failed.' }
-        & go -C $agentSource build -trimpath -ldflags '-s -w -H=windowsgui' -o (Join-Path $stage 'ChatGPT Proxy.exe') ./windows-launcher
+		& go -C $agentSource build -trimpath -ldflags '-s -w -H=windowsgui' -o (Join-Path $stage 'ChatGPT Proxy.exe') ./cmd/windows-launcher
         if ($LASTEXITCODE -ne 0) { throw 'The Windows launcher build failed.' }
     } finally {
         $env:GOOS = $oldGoOS

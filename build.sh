@@ -90,7 +90,7 @@ fi
 [[ "$STAGED_STUNNEL_INFO" != *"Update OpenSSL shared libraries"* && "$STAGED_STUNNEL_INFO" != *"rebuild stunnel"* ]] || { print -u2 "The bundled stunnel and OpenSSL runtime do not match"; exit 1; }
 
 for architecture in "${GO_ARCHES[@]}"; do
-	GOOS=darwin GOARCH="$architecture" CGO_ENABLED=0 go -C "$CERT_AGENT_DIR" build -trimpath -ldflags='-s -w' -o "$STAGE_DIR/cert-agent-$architecture" .
+	GOOS=darwin GOARCH="$architecture" CGO_ENABLED=0 go -C "$CERT_AGENT_DIR" build -trimpath -ldflags='-s -w' -o "$STAGE_DIR/cert-agent-$architecture" ./cmd/cert-agent
 done
 if [[ "$BUILD_ARCH" == arm64 ]]; then
     cp "$STAGE_DIR/cert-agent-arm64" "$STAGE_APP/Contents/Resources/cert-agent"
@@ -102,7 +102,7 @@ CLANG_ARCHES=()
 for architecture in "${ARCHES[@]}"; do
     CLANG_ARCHES+=(-arch "$architecture")
 done
-clang -fobjc-arc -framework AppKit -mmacosx-version-min=13.0 "${CLANG_ARCHES[@]}" "$ROOT/Launcher.m" "$ROOT/ChatGPTProxyUpdater.m" -o "$STAGE_APP/Contents/MacOS/ChatGPTProxyLauncher"
+clang -fobjc-arc -framework AppKit -mmacosx-version-min=13.0 "${CLANG_ARCHES[@]}" "$ROOT/Launcher.m" "$ROOT/SetupProgressWindow.m" "$ROOT/ChatGPTProxyUpdater.m" -o "$STAGE_APP/Contents/MacOS/ChatGPTProxyLauncher"
 
 if [[ "$PRODUCTION_BUILD" == 1 ]]; then
     : "${SPRU_DEVELOPER_ID:?Set the Developer ID Application identity}"
