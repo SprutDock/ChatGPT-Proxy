@@ -1,4 +1,4 @@
-package main
+package identity
 
 import (
 	"bytes"
@@ -15,10 +15,12 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"sprutdock/cert-agent/internal/state"
 )
 
-func createCSR(directory string) (string, string, error) {
-	if err := ensurePrivateDir(directory); err != nil {
+func CreateCSR(directory string) (string, string, error) {
+	if err := state.EnsurePrivateDir(directory); err != nil {
 		return "", "", err
 	}
 	key, err := rsa.GenerateKey(rand.Reader, 3072)
@@ -30,10 +32,10 @@ func createCSR(directory string) (string, string, error) {
 		return "", "", err
 	}
 	keyPath := filepath.Join(directory, "client.key")
-	if err := writeAtomic(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyBytes}), 0o600); err != nil {
+	if err := state.WriteAtomic(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyBytes}), 0o600); err != nil {
 		return "", "", err
 	}
-	requestID, err := randomHex(16)
+	requestID, err := state.RandomHex(16)
 	if err != nil {
 		return "", "", err
 	}
@@ -43,13 +45,13 @@ func createCSR(directory string) (string, string, error) {
 		return "", "", err
 	}
 	csrPath := filepath.Join(directory, "client.csr")
-	if err := writeAtomic(csrPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrBytes}), 0o600); err != nil {
+	if err := state.WriteAtomic(csrPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrBytes}), 0o600); err != nil {
 		return "", "", err
 	}
 	return csrPath, keyPath, nil
 }
 
-func readCSR(path string) (string, error) {
+func ReadCSR(path string) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
@@ -84,7 +86,7 @@ func parsePrivateKey(path string) (*rsa.PrivateKey, error) {
 	return key, nil
 }
 
-func saveIdentity(p Paths, chain, keyPath string) (string, error) {
+func SaveIdentity(p state.Paths, chain, keyPath string) (string, error) {
 	certificates, err := parseCertificateChain(chain)
 	if err != nil {
 		return "", err
@@ -107,12 +109,12 @@ func saveIdentity(p Paths, chain, keyPath string) (string, error) {
 	if !ok || !bytes.Equal(certificateKey.N.Bytes(), key.PublicKey.N.Bytes()) || certificateKey.E != key.PublicKey.E {
 		return "", fmt.Errorf("issued certificate does not match the local private key")
 	}
-	serial := normalizeSerial(leaf.SerialNumber)
+	serial := NormalizeSerial(leaf.SerialNumber)
 	if !validSerial(serial) {
 		return "", fmt.Errorf("issued certificate serial is invalid")
 	}
 	releasePath := filepath.Join(p.Releases, serial)
-	if err := ensurePrivateDir(p.Releases); err != nil {
+	if err := state.EnsurePrivateDir(p.Releases); err != nil {
 		return "", err
 	}
 	if err := os.Mkdir(releasePath, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
@@ -122,10 +124,10 @@ func saveIdentity(p Paths, chain, keyPath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := writeAtomic(filepath.Join(releasePath, "client.pem"), []byte(chain), 0o600); err != nil {
+	if err := state.WriteAtomic(filepath.Join(releasePath, "client.pem"), []byte(chain), 0o600); err != nil {
 		return "", err
 	}
-	if err := writeAtomic(filepath.Join(releasePath, "client.key"), keyBytes, 0o600); err != nil {
+	if err := state.WriteAtomic(filepath.Join(releasePath, "client.key"), keyBytes, 0o600); err != nil {
 		return "", err
 	}
 	return serial, nil
@@ -152,7 +154,7 @@ func parseCertificateChain(chain string) ([]*x509.Certificate, error) {
 	return certificates, nil
 }
 
-func verifyClientChain(p Paths, certificates []*x509.Certificate) error {
+func verifyClientChain(p state.Paths, certificates []*x509.Certificate) error {
 	trust, err := os.ReadFile(filepath.Join(p.Resources, "client-ca-chain.pem"))
 	if err != nil {
 		return err
@@ -186,7 +188,7 @@ func containsUsage(usages []x509.ExtKeyUsage, wanted x509.ExtKeyUsage) bool {
 	return false
 }
 
-func normalizeSerial(value *big.Int) string {
+func NormalizeSerial(value *big.Int) string {
 	serial := strings.ToLower(value.Text(16))
 	serial = strings.TrimLeft(serial, "0")
 	if serial == "" {
@@ -207,7 +209,7 @@ func validSerial(value string) bool {
 	return true
 }
 
-func loadActive(p Paths) (*tls.Certificate, error) {
+func LoadActive(p state.Paths) (*tls.Certificate, error) {
 	certificate, err := tls.LoadX509KeyPair(filepath.Join(p.ActiveLink, "client.pem"), filepath.Join(p.ActiveLink, "client.key"))
 	if err != nil {
 		return nil, err
@@ -215,42 +217,26 @@ func loadActive(p Paths) (*tls.Certificate, error) {
 	return &certificate, nil
 }
 
-func setActive(p Paths, serial string) (string, error) {
-	releasePath := filepath.Join(p.Releases, serial)
-	if _, err := os.Stat(filepath.Join(releasePath, "client.pem")); err != nil {
-		return "", err
-	}
-	if err := ensurePrivateDir(filepath.Dir(p.ActiveLink)); err != nil {
-		return "", err
-	}
-	previous, _ := os.Readlink(p.ActiveLink)
-	relativePath, err := filepath.Rel(filepath.Dir(p.ActiveLink), releasePath)
-	if err != nil {
-		return previous, err
-	}
-	temporary := p.ActiveLink + ".new"
-	_ = os.Remove(temporary)
-	if err := os.Symlink(relativePath, temporary); err != nil {
-		return previous, err
-	}
-	if err := os.Rename(temporary, p.ActiveLink); err != nil {
-		_ = os.Remove(temporary)
-		return previous, err
-	}
-	return previous, nil
+func ActiveExists(p state.Paths) bool {
+	_, err := os.Stat(filepath.Join(p.ActiveLink, "client.pem"))
+	return err == nil
 }
 
-func restoreActive(p Paths, previous string) error {
-	if previous == "" {
-		if err := os.Remove(p.ActiveLink); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
+func ParseLeaf(der []byte) (*x509.Certificate, error) {
+	return x509.ParseCertificate(der)
+}
+
+func CertificateSerial(certificate *tls.Certificate) (string, error) {
+	leaf := certificate.Leaf
+	if leaf == nil && len(certificate.Certificate) > 0 {
+		parsed, err := ParseLeaf(certificate.Certificate[0])
+		if err != nil {
+			return "", err
 		}
-		return nil
+		leaf = parsed
 	}
-	temporary := p.ActiveLink + ".restore"
-	_ = os.Remove(temporary)
-	if err := os.Symlink(previous, temporary); err != nil {
-		return err
+	if leaf == nil {
+		return "", fmt.Errorf("active certificate is invalid")
 	}
-	return os.Rename(temporary, p.ActiveLink)
+	return NormalizeSerial(leaf.SerialNumber), nil
 }

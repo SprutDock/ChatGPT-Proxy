@@ -1,9 +1,11 @@
-package main
+package api
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -11,7 +13,9 @@ import (
 	"time"
 )
 
-type APIClient struct {
+const baseURL = "https://enroll.sprutdock.com"
+
+type Client struct {
 	baseURL string
 }
 
@@ -28,11 +32,11 @@ type RenewalResult struct {
 	CertificateChain string `json:"certificate_chain"`
 }
 
-func newAPIClient() *APIClient {
-	return &APIClient{baseURL: apiBaseURL}
+func NewClient() *Client {
+	return &Client{baseURL: baseURL}
 }
 
-func (client *APIClient) post(path string, body any, certificate *tls.Certificate, result any) error {
+func (client *Client) post(path string, body any, certificate *tls.Certificate, result any) error {
 	data, err := json.Marshal(body)
 	if err != nil {
 		return err
@@ -44,7 +48,7 @@ func (client *APIClient) post(path string, body any, certificate *tls.Certificat
 	request.Header.Set("Content-Type", "application/json")
 	transport := &http.Transport{
 		Proxy:           nil,
-		DialContext:     (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		DialContext:     dialWithDNSRetry(&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}),
 		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 	}
 	if certificate != nil {
@@ -67,12 +71,6 @@ func (client *APIClient) post(path string, body any, certificate *tls.Certificat
 		return fmt.Errorf("enrollment service response could not be read: %w", err)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		var value struct {
-			Error string `json:"error"`
-		}
-		if json.Unmarshal(responseBody, &value) == nil && value.Error != "" {
-			return fmt.Errorf("%s", value.Error)
-		}
 		return fmt.Errorf("enrollment service returned HTTP %d", response.StatusCode)
 	}
 	if err := json.Unmarshal(responseBody, result); err != nil {
@@ -81,7 +79,18 @@ func (client *APIClient) post(path string, body any, certificate *tls.Certificat
 	return nil
 }
 
-func (client *APIClient) enroll(invitation, requestID, credential, csr string) (EnrollmentResult, error) {
+func dialWithDNSRetry(dialer *net.Dialer) func(context.Context, string, string) (net.Conn, error) {
+	return func(ctx context.Context, network, address string) (net.Conn, error) {
+		connection, err := dialer.DialContext(ctx, network, address)
+		var dnsError *net.DNSError
+		if err == nil || !errors.As(err, &dnsError) || !dnsError.IsTimeout {
+			return connection, err
+		}
+		return dialer.DialContext(ctx, network, address)
+	}
+}
+
+func (client *Client) Enroll(invitation, requestID, credential, csr string) (EnrollmentResult, error) {
 	var result EnrollmentResult
 	err := client.post("/v1/enroll", map[string]string{
 		"invitation":            invitation,
@@ -92,7 +101,7 @@ func (client *APIClient) enroll(invitation, requestID, credential, csr string) (
 	return result, err
 }
 
-func (client *APIClient) renew(requestID, csr string, current *tls.Certificate) (RenewalResult, error) {
+func (client *Client) Renew(requestID, csr string, current *tls.Certificate) (RenewalResult, error) {
 	var result RenewalResult
 	err := client.post("/v1/renew", map[string]string{
 		"request_id": requestID,
@@ -101,7 +110,7 @@ func (client *APIClient) renew(requestID, csr string, current *tls.Certificate) 
 	return result, err
 }
 
-func (client *APIClient) confirmRotation(requestID string, current *tls.Certificate) error {
+func (client *Client) ConfirmRotation(requestID string, current *tls.Certificate) error {
 	var result map[string]any
 	return client.post("/v1/rotation-confirm", map[string]string{"request_id": requestID}, current, &result)
 }
