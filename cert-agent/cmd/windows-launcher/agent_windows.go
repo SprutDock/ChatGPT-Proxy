@@ -138,7 +138,7 @@ func scanAgentEvents(reader io.Reader, events chan<- agentEvent) {
 
 func knownAgentEvent(event string) bool {
 	switch event {
-	case "checking", "setup_started", "invitation_required", "request_prepared", "enrolling", "renewing", "certificate_saved", "tunnel_starting", "verifying", "proxy_conflict", "ready":
+	case "checking", "setup_started", "invitation_required", "request_prepared", "enrolling", "renewing", "certificate_saved", "tunnel_starting", "verifying", "proxy_conflict", "stunnel_path_error", "ready":
 		return true
 	default:
 		return false

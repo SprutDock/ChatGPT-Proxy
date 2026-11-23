@@ -73,12 +73,17 @@ func stopStunnelProcess(pid uint32) error {
 }
 
 func startStunnel(p state.Paths) error {
+	stunnelResources, stunnelState, err := StunnelDirectories(p)
+	if err != nil {
+		return err
+	}
 	logFile, err := os.OpenFile(p.StunnelLog, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}
-	stunnel := Command(filepath.Join(p.Resources, "stunnel.exe"), p.StunnelConf)
-	stunnel.Env = stunnelEnvironment(p.Resources)
+	stunnel := Command(filepath.Join(stunnelResources, "stunnel.exe"), filepath.Join(stunnelState, "stunnel.conf"))
+	stunnel.Dir = filepath.Join(stunnelResources, "config")
+	stunnel.Env = stunnelEnvironment(stunnelResources)
 	stunnel.Stdout = logFile
 	stunnel.Stderr = logFile
 	stunnel.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000}

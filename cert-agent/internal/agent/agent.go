@@ -38,6 +38,9 @@ func EnsureWithEvents(p state.Paths, interactive bool, events *EventStream) erro
 	}
 	configChanged, err := tunnel.WriteStunnelConfig(p)
 	if err != nil {
+		if emitErr := emitStunnelPathError(events, err); emitErr != nil {
+			return emitErr
+		}
 		return err
 	}
 	pending, err := state.LoadPending(p)
@@ -61,6 +64,9 @@ func EnsureWithEvents(p state.Paths, interactive bool, events *EventStream) erro
 		proxyChecked, err = renewIfDue(p, &currentState, &pending, events)
 	}
 	if err != nil {
+		if emitErr := emitStunnelPathError(events, err); emitErr != nil {
+			return emitErr
+		}
 		if eventErr := emitProxyConflict(events, err); eventErr != nil {
 			return eventErr
 		}
@@ -85,6 +91,9 @@ func EnsureWithEvents(p state.Paths, interactive bool, events *EventStream) erro
 		err = platform.EnsureStunnelRunning(p)
 	}
 	if err != nil {
+		if emitErr := emitStunnelPathError(events, err); emitErr != nil {
+			return emitErr
+		}
 		if eventErr := emitProxyConflict(events, err); eventErr != nil {
 			return eventErr
 		}
@@ -111,6 +120,9 @@ func EnsureWithEvents(p state.Paths, interactive bool, events *EventStream) erro
 			return events.Emit("verifying")
 		})
 		if err != nil {
+			if emitErr := emitStunnelPathError(events, err); emitErr != nil {
+				return emitErr
+			}
 			if eventErr := emitProxyConflict(events, err); eventErr != nil {
 				return eventErr
 			}
@@ -143,6 +155,13 @@ func verifyProxyWithRestart(verify, restart func() error) error {
 func emitProxyConflict(events *EventStream, err error) error {
 	if errors.Is(err, platform.ErrProxyOwnerConflict) {
 		return events.Emit("proxy_conflict")
+	}
+	return nil
+}
+
+func emitStunnelPathError(events *EventStream, err error) error {
+	if errors.Is(err, platform.ErrStunnelPathUnavailable) {
+		return events.Emit("stunnel_path_error")
 	}
 	return nil
 }
