@@ -21,6 +21,7 @@ import (
 const (
 	proxyHost    = "sprutdock.com"
 	proxyAddress = "127.0.0.1:3128"
+	ProxyURL     = "http://" + proxyAddress
 )
 
 func WriteStunnelConfig(p state.Paths) (bool, error) {

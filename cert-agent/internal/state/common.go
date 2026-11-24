@@ -60,6 +60,10 @@ func WriteAtomic(path string, value []byte, mode os.FileMode) error {
 	if err := EnsurePrivateDir(filepath.Dir(path)); err != nil {
 		return err
 	}
+	return ReplaceAtomic(path, value, mode)
+}
+
+func ReplaceAtomic(path string, value []byte, mode os.FileMode) error {
 	temporary, err := os.CreateTemp(filepath.Dir(path), ".sprutdock-*")
 	if err != nil {
 		return err

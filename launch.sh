@@ -2,8 +2,6 @@
 set -euo pipefail
 
 SCRIPT_DIR="${0:A:h}"
-CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
-ENV_FILE="$CODEX_HOME/.env"
 PROXY_URL_FILE="$SCRIPT_DIR/macos-proxy-url.txt"
 CERT_AGENT="$SCRIPT_DIR/cert-agent"
 CHATGPT_APP="/Applications/ChatGPT.app"
@@ -19,8 +17,6 @@ log_event() {
 }
 log_event "launcher invoked"
 
-[[ -x "$APP_EXECUTABLE" ]] || { print -u2 "Не найдено приложение /Applications/ChatGPT.app"; exit 1; }
-[[ -x "$LAUNCHER_EXECUTABLE" ]] || { print -u2 "Не найден системный запускатель ChatGPT"; exit 1; }
 [[ -x "$CERT_AGENT" ]] || { print -u2 "Не найден cert-agent в ресурсах приложения"; exit 1; }
 [[ "$LOCAL_PROXY" == http://127.0.0.1:3128 ]] || { print -u2 "Некорректный локальный proxy URL"; exit 1; }
 
@@ -51,22 +47,11 @@ if [[ "$ENSURE_STATUS" -ne 0 ]]; then
     exit "$ENSURE_STATUS"
 fi
 log_event "proxy ensure ready seconds=$(( $(/bin/date +%s) - ENSURE_STARTED ))"
+CODEX_STATUS=0
+"$CERT_AGENT" configure-codex || CODEX_STATUS=$?
 
-proxy_http=""
-proxy_https=""
-if [[ -r "$ENV_FILE" ]]; then
-    set -a
-    source "$ENV_FILE"
-    set +a
-    proxy_http="${HTTP_PROXY:-${http_proxy:-}}"
-    proxy_https="${HTTPS_PROXY:-${https_proxy:-}}"
-fi
-
-if [[ "$proxy_http" != "$LOCAL_PROXY" || "$proxy_https" != "$LOCAL_PROXY" ]]; then
-    if [[ -n "$proxy_http" || -n "$proxy_https" ]]; then
-        /usr/bin/osascript -e 'display dialog "ChatGPT Proxy переключит этот запуск на локальный сертификатный туннель http://127.0.0.1:3128. Существующий ~/.codex/.env останется без изменений." buttons {"Отмена", "Продолжить"} default button "Продолжить" with icon caution' >/dev/null
-    fi
-fi
+[[ -x "$APP_EXECUTABLE" ]] || { print -u2 "Не найдено приложение /Applications/ChatGPT.app"; exit 1; }
+[[ -x "$LAUNCHER_EXECUTABLE" ]] || { print -u2 "Не найден системный запускатель ChatGPT"; exit 1; }
 
 export HTTP_PROXY="$LOCAL_PROXY"
 export HTTPS_PROXY="$LOCAL_PROXY"
@@ -86,3 +71,7 @@ if ! "$LAUNCHER_EXECUTABLE" --open-application "$CHATGPT_APP" "--proxy-server=$L
     exit 1
 fi
 log_event "ChatGPT launched through Launch Services"
+if [[ "$CODEX_STATUS" -ne 0 ]]; then
+    log_event "Codex CLI setup failed code=$CODEX_STATUS"
+    /usr/bin/osascript -e 'display notification "Проверьте .env в папке Codex. Для работающего фонового сервера выполните codex app-server daemon restart." with title "Настройка Codex CLI не завершена"' >/dev/null 2>&1 || true
+fi

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,7 +24,7 @@ func main() {
 		}
 		return
 	}
-	if err := runApplication(root); err != nil {
+	if err := runApplication(root); err != nil && !errors.Is(err, errOperationCancelled) {
 		showError(writeFailureLog(err.Error()))
 	}
 }

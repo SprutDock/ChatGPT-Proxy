@@ -76,11 +76,12 @@ func secureStunnelDirectory(directory, sid string) error {
 	if err := os.Mkdir(directory, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
 		return err
 	}
-	info, err := os.Lstat(directory)
+	info, err := stunnelPathAttributes(directory)
 	if err != nil {
 		return err
 	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+	const directoryAttributes = syscall.FILE_ATTRIBUTE_DIRECTORY | syscall.FILE_ATTRIBUTE_REPARSE_POINT
+	if info.FileAttributes&directoryAttributes != syscall.FILE_ATTRIBUTE_DIRECTORY {
 		return fmt.Errorf("protected stunnel directory is not a regular directory")
 	}
 	icacls, err := systemTool("icacls.exe")
@@ -102,11 +103,15 @@ func secureStunnelDirectory(directory, sid string) error {
 }
 
 func ensureStunnelJunction(alias, target string) error {
-	if info, err := os.Lstat(alias); err == nil {
-		if info.Mode()&os.ModeSymlink == 0 {
-			return fmt.Errorf("stunnel state alias already exists and is not a junction")
-		}
-		if junctionTargets(alias, target) == nil {
+	targetInfo, err := os.Stat(target)
+	if err != nil {
+		return err
+	}
+	if !targetInfo.IsDir() {
+		return fmt.Errorf("stunnel junction target is not a directory")
+	}
+	if matches, err := junctionMatches(alias, targetInfo); err == nil {
+		if matches {
 			return nil
 		}
 		if err := os.Remove(alias); err != nil {
@@ -119,33 +124,62 @@ func ensureStunnelJunction(alias, target string) error {
 	if err != nil {
 		return err
 	}
-	command := Command(cmd, "/d", "/c", `mklink /J "%SPRU_STUNNEL_STATE_LINK%" "%SPRU_STUNNEL_STATE_TARGET%"`)
+	command := Command(cmd)
 	command.Env = stunnelJunctionEnvironment(alias, target)
-	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000}
-	_, _ = command.CombinedOutput()
-	return junctionTargets(alias, target)
-}
-
-func junctionTargets(alias, target string) error {
-	info, err := os.Lstat(alias)
+	command.SysProcAttr = &syscall.SysProcAttr{
+		HideWindow:    true,
+		CreationFlags: 0x08000000,
+		CmdLine:       syscall.EscapeArg(cmd) + ` /d /v:off /c mklink /J "%SPRU_STUNNEL_STATE_LINK%" "%SPRU_STUNNEL_STATE_TARGET%"`,
+	}
+	if output, err := command.CombinedOutput(); err != nil {
+		return fmt.Errorf("could not create stunnel junction: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	matches, err := junctionMatches(alias, targetInfo)
 	if err != nil {
 		return err
 	}
-	if info.Mode()&os.ModeSymlink == 0 {
-		return fmt.Errorf("stunnel state alias is not a junction")
-	}
-	actual, err := filepath.EvalSymlinks(alias)
-	if err != nil {
-		return err
-	}
-	expected, err := filepath.EvalSymlinks(target)
-	if err != nil {
-		return err
-	}
-	if !strings.EqualFold(filepath.Clean(actual), filepath.Clean(expected)) {
+	if !matches {
 		return fmt.Errorf("stunnel state junction points to a different directory")
 	}
 	return nil
+}
+
+func junctionMatches(alias string, target os.FileInfo) (bool, error) {
+	data, err := stunnelPathAttributes(alias)
+	if err != nil {
+		return false, err
+	}
+	const junctionTag = 0xa0000003
+	const junctionAttributes = syscall.FILE_ATTRIBUTE_DIRECTORY | syscall.FILE_ATTRIBUTE_REPARSE_POINT
+	if data.FileAttributes&junctionAttributes != junctionAttributes || data.Reserved0 != junctionTag {
+		return false, fmt.Errorf("stunnel state alias is not a junction")
+	}
+	info, err := os.Stat(alias)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return os.SameFile(info, target), nil
+}
+
+func stunnelPathAttributes(path string) (syscall.Win32finddata, error) {
+	var data syscall.Win32finddata
+	searchPath := path
+	if volume := filepath.VolumeName(path); len(volume) == 2 && volume[1] == ':' {
+		searchPath = `\\?\` + path
+	}
+	name, err := syscall.UTF16PtrFromString(searchPath)
+	if err != nil {
+		return data, err
+	}
+	handle, err := syscall.FindFirstFile(name, &data)
+	if err != nil {
+		return data, &os.PathError{Op: "FindFirstFile", Path: path, Err: err}
+	}
+	_ = syscall.FindClose(handle)
+	return data, nil
 }
 
 func sameLocalNTFSVolume(first, second string) error {

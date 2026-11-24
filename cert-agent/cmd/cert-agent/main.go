@@ -5,13 +5,23 @@ import (
 	"os"
 
 	"sprutdock/cert-agent/internal/agent"
+	"sprutdock/cert-agent/internal/codex"
 	"sprutdock/cert-agent/internal/platform"
 	"sprutdock/cert-agent/internal/state"
 )
 
 func main() {
 	if len(os.Args) < 2 {
-		fail("expected ensure, status, or stop")
+		fail("expected ensure, status, stop, or configure-codex")
+	}
+	if os.Args[1] == "configure-codex" {
+		if len(os.Args) != 2 {
+			fail("configure-codex does not accept options")
+		}
+		if err := codex.Configure(); err != nil {
+			fail(err.Error())
+		}
+		return
 	}
 	p, err := platform.Paths()
 	if err != nil {
