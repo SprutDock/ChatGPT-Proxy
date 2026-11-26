@@ -25,9 +25,16 @@ func InstallBackgroundCheck(p state.Paths, interactive bool) error {
 		return err
 	}
 	domain := "gui/" + uid
+	stunnelLoaded := Command("launchctl", "print", domain+"/"+StunnelLabel).Run() == nil
 	stunnelPlist := launchAgentPlist(StunnelLabel, []string{stunnel, p.StunnelConf}, p.StunnelLog, true, 0)
-	if err := state.WriteAtomic(stunnelAgent, []byte(stunnelPlist), 0o600); err != nil {
+	stunnelChanged, err := state.WriteIfChanged(stunnelAgent, []byte(stunnelPlist), 0o600)
+	if err != nil {
 		return err
+	}
+	if stunnelChanged && stunnelLoaded {
+		if err := reloadJob(domain, StunnelLabel, stunnelAgent); err != nil {
+			return err
+		}
 	}
 	agent := filepath.Join(p.Resources, "cert-agent")
 	schedulerPlist := launchAgentPlist(AgentLabel, []string{agent, "ensure", "--background"}, p.Log, false, 12*60*60)
@@ -64,7 +71,7 @@ func ensureJobLoaded(domain, label, plistPath string) error {
 		return nil
 	}
 	if err := Command("launchctl", "bootstrap", domain, plistPath).Run(); err != nil {
-		return fmt.Errorf("could not load the certificate agent")
+		return fmt.Errorf("could not load the background service")
 	}
 	return nil
 }
@@ -73,11 +80,11 @@ func reloadJob(domain, label, plistPath string) error {
 	target := domain + "/" + label
 	if Command("launchctl", "print", target).Run() == nil {
 		if err := Command("launchctl", "bootout", target).Run(); err != nil {
-			return fmt.Errorf("could not reload the certificate agent")
+			return fmt.Errorf("could not reload the background service")
 		}
 	}
 	if err := Command("launchctl", "bootstrap", domain, plistPath).Run(); err != nil {
-		return fmt.Errorf("could not reload the certificate agent")
+		return fmt.Errorf("could not reload the background service")
 	}
 	return nil
 }

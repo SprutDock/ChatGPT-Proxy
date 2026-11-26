@@ -9,9 +9,12 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"sprutdock/cert-agent/internal/codex"
+	"sprutdock/cert-agent/internal/tunnel"
 )
 
-const localProxyURL = "http://127.0.0.1:3128"
+const localProxyURL = tunnel.ProxyURL
 
 var errOperationCancelled = errors.New("operation cancelled")
 
@@ -25,6 +28,26 @@ func runApplication(root string) error {
 	} else if updateStarted {
 		return nil
 	}
+	ui, err := newSetupUI()
+	if err != nil {
+		return fmt.Errorf("не удалось открыть окно настройки ChatGPT Proxy")
+	}
+	defer ui.close()
+	if err := ensureTunnel(root, ui); err != nil {
+		return err
+	}
+	codexErr := codex.Configure()
+	if codexErr != nil {
+		launcherLog("Codex CLI setup failed")
+	}
+	err = launchChatGPT(ui)
+	if err == nil && codexErr != nil {
+		showMessage("Настройка Codex CLI не завершена", "Проверьте .env в папке Codex. Для работающего фонового сервера выполните codex app-server daemon restart в обычном PowerShell.", 0x30)
+	}
+	return err
+}
+
+func launchChatGPT(ui *setupUI) error {
 	appID, err := findChatGPTAppID()
 	if err != nil {
 		return err
@@ -36,42 +59,7 @@ func runApplication(root string) error {
 	if !confirmProxyOverride() {
 		return nil
 	}
-	ui, err := newSetupUI()
-	if err != nil {
-		return fmt.Errorf("не удалось открыть окно настройки ChatGPT Proxy")
-	}
-	defer ui.close()
-
-	for {
-		ui.begin("Проверка сертификата и защищённого соединения…")
-		if err := runCertificateAgent(root, ui); err != nil {
-			if errors.Is(err, errOperationCancelled) {
-				return nil
-			}
-			stage := "checking"
-			var agentErr agentRunError
-			if errors.As(err, &agentErr) && agentErr.stage != "" {
-				stage = agentErr.stage
-			}
-			launcherLog("certificate ensure failed stage=" + stage)
-			failure := "Настройка сертификата или защищённого соединения не завершилась. Повторите попытку."
-			if stage == "proxy_conflict" {
-				failure = "Локальный порт 3128 занят другим процессом. Закройте это приложение и повторите запуск."
-			}
-			ui.fail(failure)
-			action := <-ui.actions
-			if action.kind != "retry" {
-				return nil
-			}
-			continue
-		}
-		break
-	}
-
 	if err := waitForChatGPTClosed(appID, ui); err != nil {
-		if errors.Is(err, errOperationCancelled) {
-			return nil
-		}
 		return err
 	}
 	command := exec.Command(alias, "--proxy-server="+localProxyURL)
@@ -86,6 +74,32 @@ func runApplication(root string) error {
 	}
 	launcherLog(fmt.Sprintf("ChatGPT activation succeeded pid=%d", processID))
 	return nil
+}
+
+func ensureTunnel(root string, ui *setupUI) error {
+	for {
+		ui.begin("Проверка сертификата и защищённого соединения…")
+		err := runCertificateAgent(root, ui)
+		if err == nil || errors.Is(err, errOperationCancelled) {
+			return err
+		}
+		stage := "checking"
+		var agentErr agentRunError
+		if errors.As(err, &agentErr) && agentErr.stage != "" {
+			stage = agentErr.stage
+		}
+		launcherLog("certificate ensure failed stage=" + stage)
+		failure := "Настройка сертификата или защищённого соединения не завершилась. Повторите попытку."
+		if stage == "proxy_conflict" {
+			failure = "Локальный порт 3128 занят другим процессом. Закройте это приложение и повторите запуск."
+		} else if stage == "stunnel_path_error" {
+			failure = "Не удалось безопасно подготовить путь для файлов stunnel. Проверьте, что приложение и ProgramData находятся на одном локальном NTFS-диске, профиль расположен на локальном диске, а приложению разрешено создать защищённый каталог в ProgramData."
+		}
+		ui.fail(failure)
+		if (<-ui.actions).kind != "retry" {
+			return errOperationCancelled
+		}
+	}
 }
 
 func waitForActivatedApplication(processID uint32, appID string) bool {

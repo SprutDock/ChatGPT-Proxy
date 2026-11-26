@@ -20,8 +20,12 @@ func Paths() (state.Paths, error) {
 		return state.Paths{}, err
 	}
 	resources := filepath.Dir(executable)
-	home := os.Getenv("HOME")
-	if home == "" {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return state.Paths{}, fmt.Errorf("current user home is unavailable")
+	}
+	home, err = filepath.Abs(home)
+	if err != nil {
 		return state.Paths{}, fmt.Errorf("current user home is unavailable")
 	}
 	stateDirectory := filepath.Join(home, "Library", "Application Support", "SprutDock Proxy")
@@ -50,6 +54,10 @@ func StunnelPath(path string) string {
 	return path
 }
 
+func StunnelDirectories(p state.Paths) (string, string, error) {
+	return p.Resources, p.State, nil
+}
+
 func StunnelStorePath(_, path string) (string, error) {
 	return path, nil
 }
@@ -58,10 +66,20 @@ func StunnelForegroundOption() string {
 	return "foreground = yes"
 }
 
-func StunnelAgentPath(state.Paths) string {
-	return filepath.Join(os.Getenv("HOME"), "Library", "LaunchAgents", StunnelLabel+".plist")
+func StunnelAgentPath(p state.Paths) string {
+	return filepath.Join(homeDirectory(p), "Library", "LaunchAgents", StunnelLabel+".plist")
 }
 
-func SchedulerAgentPath(state.Paths) string {
-	return filepath.Join(os.Getenv("HOME"), "Library", "LaunchAgents", AgentLabel+".plist")
+func SchedulerAgentPath(p state.Paths) string {
+	return filepath.Join(homeDirectory(p), "Library", "LaunchAgents", AgentLabel+".plist")
+}
+
+func homeDirectory(p state.Paths) string {
+	home, err := os.UserHomeDir()
+	if err == nil && home != "" {
+		if absolute, absErr := filepath.Abs(home); absErr == nil {
+			return absolute
+		}
+	}
+	return filepath.Dir(filepath.Dir(filepath.Dir(p.State)))
 }

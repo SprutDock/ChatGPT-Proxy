@@ -21,24 +21,36 @@ import (
 const (
 	proxyHost    = "sprutdock.com"
 	proxyAddress = "127.0.0.1:3128"
+	ProxyURL     = "http://" + proxyAddress
 )
 
 func WriteStunnelConfig(p state.Paths) (bool, error) {
-	certificatePath, err := platform.StunnelStorePath(p.Resources, filepath.Join(p.ActiveLink, "client.pem"))
+	stunnelResources, stunnelState, err := platform.StunnelDirectories(p)
 	if err != nil {
 		return false, err
 	}
-	keyPath, err := platform.StunnelStorePath(p.Resources, filepath.Join(p.ActiveLink, "client.key"))
+	activeLink := filepath.Join(stunnelState, "identity", "active")
+	certificatePath, err := platform.StunnelStorePath(stunnelResources, filepath.Join(activeLink, "client.pem"))
 	if err != nil {
 		return false, err
 	}
-	caPath, err := platform.StunnelStorePath(p.Resources, filepath.Join(p.Resources, "server-ca.pem"))
+	keyPath, err := platform.StunnelStorePath(stunnelResources, filepath.Join(activeLink, "client.key"))
 	if err != nil {
 		return false, err
+	}
+	caPath, err := platform.StunnelStorePath(stunnelResources, filepath.Join(stunnelResources, "server-ca.pem"))
+	if err != nil {
+		return false, err
+	}
+	stunnelLog := filepath.Join(stunnelState, "stunnel.log")
+	for _, path := range []string{stunnelLog, certificatePath, keyPath, caPath} {
+		if strings.ContainsAny(path, "\r\n") {
+			return false, fmt.Errorf("%w: stunnel paths cannot contain line breaks", platform.ErrStunnelPathUnavailable)
+		}
 	}
 	config := []string{
 		"debug = 4",
-		"output = " + platform.StunnelPath(p.StunnelLog),
+		"output = " + platform.StunnelPath(stunnelLog),
 		"[sprutdock-proxy]",
 		"client = yes",
 		"delay = yes",
